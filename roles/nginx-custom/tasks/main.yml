@@ -1,0 +1,90 @@
+- name: Installing NGINX Dependencies
+  package:
+    name:
+    - openssl-libs
+    - openssl-devel
+    - unzip
+    - make
+    - automake
+    - gcc
+    - gcc-c++
+    - kernel-devel
+    - pcre-devel
+    - pcre2-devel
+    state: latest
+
+- name: Ensure www-data group exists
+  group:
+    name: www-data
+    state: present
+
+- name: Add the user www-data
+  user:
+    name: www-data
+    comment: web users for nginx
+    group: www-data
+
+- name: Add the necessary directories to avoid erroring
+  become: yes
+  shell: mkdir -p /var/lib/nginx/{body,fastcgi}
+  ignore_errors: yes
+
+- name: Downloading NGINX sources
+  get_url:
+    url: "{{ nginx_tarball_url }}"
+    dest: "/tmp/{{ nginx_version }}.tar.gz"
+  register: nginx_source
+
+- name: Unpacking NGINX
+  unarchive:
+    copy: no
+    dest: /tmp/
+    src: "{{ nginx_source.dest }}"
+  when: nginx_source.changed
+  register: nginx_source_unpack
+
+- name: Create required Nginx dirs
+  become: yes
+  file:
+    path: /etc/nginx
+    state: directory
+    owner: root
+    mode: 0755
+
+- name: Configuring NGINX source with custom modules
+  command: "./configure --sbin-path={{ nginx_sbin_path }} --conf-path={{ nginx_conf_path }} {{ nginx_custom_modules }}"
+  args:
+    chdir: "{{ nginx_install_dir }}"
+  when: nginx_source_unpack is changed
+  register: nginx_configure
+
+- name: Installing NGINX
+  become: yes
+  shell: make && make install
+  args:
+    chdir: "{{ nginx_install_dir }}"
+  when: nginx_configure is changed
+
+- name: Creating NGINX conf file
+  become: yes
+  template:
+    src: nginx.conf
+    dest: "{{ nginx_conf_path }}"
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Installing NGINX systemd service
+  become: yes
+  template:
+    src: nginx.service
+    dest: /usr/lib/systemd/system/nginx.service
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Make sure a service is running
+  systemd:
+    state: started
+    daemon_reload: yes
+    name: nginx
